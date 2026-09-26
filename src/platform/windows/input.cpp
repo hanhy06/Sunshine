@@ -32,6 +32,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/virtualhid_input.h"
+#include "src/precision_touchpad.h"
 
 namespace platf {
   using namespace std::literals;
@@ -1309,6 +1310,9 @@ namespace platf {
    */
   platform_caps::caps_t get_capabilities() {
     platform_caps::caps_t caps = 0;
+    if (config::input.mouse && precision_touchpad::device::supported()) {
+      caps |= precision_touchpad::feature;
+    }
 
     if (virtualhid::configured_gamepad_supports_controller_extensions()) {
       caps |= platform_caps::controller_touch;

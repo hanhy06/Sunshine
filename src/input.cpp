@@ -36,6 +36,7 @@ extern "C" {
 #include "platform/virtualhid_input.h"
 #include "thread_pool.h"
 #include "utility.h"
+#include "precision_touchpad.h"
 
 // Win32 WHEEL_DELTA constant
 #ifndef WHEEL_DELTA
@@ -292,6 +293,9 @@ namespace input {
 
     std::vector<gamepad_t> gamepads;  ///< Virtual gamepad slots tracked for the stream.
     std::unique_ptr<platf::client_input_t> client_context;  ///< Client context.
+#ifdef _WIN32
+    precision_touchpad::device touchpad;  ///< Session-owned precision touchpad device.
+#endif
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;  ///< Touch port event.
     platf::feedback_queue_t feedback_queue;  ///< Queue used to deliver controller feedback to the platform backend.
@@ -424,13 +428,13 @@ namespace input {
    * @return 0 if no shortcut applied, > 0 if shortcut applied.
    */
   inline int apply_shortcut(short keyCode) {
-    constexpr auto VK_F1 = 0x70;
-    constexpr auto VK_F13 = 0x7C;
+    constexpr auto VKEY_F1 = 0x70;
+    constexpr auto VKEY_F13 = 0x7C;
 
     BOOST_LOG(debug) << "Apply Shortcut: 0x"sv << util::hex((std::uint8_t) keyCode).to_string_view();
 
-    if (keyCode >= VK_F1 && keyCode <= VK_F13) {
-      mail::man->event<int>(mail::switch_display)->raise(keyCode - VK_F1);
+    if (keyCode >= VKEY_F1 && keyCode <= VKEY_F13) {
+      mail::man->event<int>(mail::switch_display)->raise(keyCode - VKEY_F1);
       return 1;
     }
 
@@ -1704,6 +1708,10 @@ namespace input {
     }
 
     switch (util::endian::little(header.magic)) {
+      case precision_touchpad::magic: {
+        precision_touchpad::frame frame;
+        return precision_touchpad::decode(packet, frame);
+      }
       case MOUSE_MOVE_REL_MAGIC_GEN5:
         return validate_fixed_input_packet<NV_REL_MOUSE_MOVE_PACKET>(packet, declared_size);
       case MOUSE_MOVE_ABS_MAGIC:
@@ -2069,6 +2077,19 @@ namespace input {
 
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
+      case precision_touchpad::magic: {
+#ifdef _WIN32
+        if (!config::input.mouse) {
+          input->touchpad.reset();
+          break;
+        }
+        precision_touchpad::frame frame;
+        if (precision_touchpad::decode(entry, frame) && !input->touchpad.submit(frame)) {
+          BOOST_LOG(error) << "Precision touchpad injection failed: " << GetLastError();
+        }
+#endif
+        break;
+      }
       case MOUSE_MOVE_REL_MAGIC_GEN5:
         passthrough(input, (PNV_REL_MOUSE_MOVE_PACKET) payload);
         break;
@@ -2200,6 +2221,9 @@ namespace input {
    * @param input Retained stream input state to reset.
    */
   void reset_input_state(const std::shared_ptr<input_t> &input) {
+#ifdef _WIN32
+    input->touchpad.reset();
+#endif
     reset_mouse_buttons();
     reset_keyboard_keys();
     reset_gamepads(input);
